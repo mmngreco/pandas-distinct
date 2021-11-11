@@ -2,9 +2,9 @@
 
 ## The problem
 
-Given two sets (`DataFrame`) A and B, we want obtain the difference (rows)
-which aren't part of the intersection. In other words, we want the disjoint set
-of both.
+Given two sets (`DataFrame`) A and B, we want to obtain the difference (rows)
+which aren't part of the intersection of both sets. In other words, we want 
+the disjoint set of both.
 
 ![venn diagram](venn.png)
 
