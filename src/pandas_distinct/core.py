@@ -71,7 +71,7 @@ def dict2dataframe(dict_idx, original):
 
 
 def distinct(left, right, subset=None):
-    """Difference of dataframes.
+    """Get distinct rows between dataframes.
 
     Parameters
     ----------
@@ -141,6 +141,18 @@ def distinct(left, right, subset=None):
 
 
 def distinct_pandas(left, right, subset=None):
+    """Get distinct rows.
+
+    Parameters
+    ----------
+    left : pandas.DataFrame
+    right : pandas.DataFrame
+    subset : list
+
+    Returns
+    -------
+    left_only, right_only : pandas.DataFrame
+    """
 
     # copy is mandatory
     left = left.copy()
@@ -153,9 +165,7 @@ def distinct_pandas(left, right, subset=None):
     _all = pd.concat([left, right], axis=0)
     _all["n"] = 1
     freq_table = _all.pivot_table(
-            columns=["source"],
-            index=subset,
-            aggfunc="count"
+        columns=["source"], index=subset, aggfunc="count"
     )
     a_subs_b = freq_table["n"].fillna(0).eval("A - B").to_frame("AsubsB")
 
@@ -164,7 +174,7 @@ def distinct_pandas(left, right, subset=None):
     # counter to dataframe
     out_a = []
     for i, n in a_distinct.itertuples():
-        out_a.extend([i]*int(n))
+        out_a.extend([i] * int(n))
     a_distinct_df = pd.DataFrame(out_a)
 
     b_distinct = (-a_subs_b).query("AsubsB>0")
@@ -172,13 +182,25 @@ def distinct_pandas(left, right, subset=None):
     # counter to dataframe
     out_b = []
     for i, n in b_distinct.itertuples():
-        out_b.extend([i]*int(n))
+        out_b.extend([i] * int(n))
     b_distinct_df = pd.DataFrame(out_b)
 
     return a_distinct_df, b_distinct_df
 
 
 def distinct_pandas_unstack(left, right, subset=None):
+    """Get distinct rows.
+
+    Parameters
+    ----------
+    left : pandas.DataFrame
+    right : pandas.DataFrame
+    subset : list
+
+    Returns
+    -------
+    left_only, right_only : pandas.DataFrame
+    """
 
     # copy is mandatory
     left = left.copy()
@@ -215,6 +237,18 @@ def distinct_pandas_unstack(left, right, subset=None):
 
 
 def distinct_counter(left, right, subset=None):
+    """Get distinct rows.
+
+    Parameters
+    ----------
+    left : pandas.DataFrame
+    right : pandas.DataFrame
+    subset : list
+
+    Returns
+    -------
+    left_only, right_only : pandas.DataFrame
+    """
 
     if subset is not None:
         left_gen = left[subset].itertuples(index=False, name="left")
@@ -233,3 +267,50 @@ def distinct_counter(left, right, subset=None):
     out_right = pd.DataFrame(_out_right.elements(), columns=right.columns)
 
     return out_left, out_right
+
+
+def distinct_merge(left, right, subset=None):
+    """Get distinct rows.
+
+    Parameters
+    ----------
+    left : pandas.DataFrame
+    right : pandas.DataFrame
+    subset : list
+
+    Returns
+    -------
+    left_only, right_only : pandas.DataFrame
+    """
+    _left = left.copy()
+    _right = right.copy()
+
+    if subset is not None:
+        _left = _left.loc[:, subset]
+        _left = _left.loc[:, subset]
+
+    # create positional reference by each index as it can be repeated.
+    # e.g.: Index = ['a', 'a', 'b'] --> [0, 1, 0]
+    _left.loc[:, 'idx'] = (
+        _left.groupby(lambda x: x).apply(lambda x: range(len(x))).explode()
+    )
+    _right.loc[:, 'idx'] = (
+        _right.groupby(lambda x: x).apply(lambda x: range(len(x))).explode()
+    )
+
+    outer_join = _left.merge(_right, how='outer', indicator=True)
+
+    drop_col = ['_merge', 'idx']
+    lonly = outer_join[(outer_join._merge == 'left_only')].drop(
+        drop_col, axis=1
+    )
+
+    ronly = outer_join[(outer_join._merge == 'righ_only')].drop(
+        drop_col, axis=1
+    )
+
+    # TODO: return the original df columns
+    # out_left = left.loc[lonly.index]
+    # out_righ = righ.loc[ronly.index]
+
+    return lonly, ronly
