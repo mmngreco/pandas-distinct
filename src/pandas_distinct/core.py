@@ -1,3 +1,21 @@
+"""Distinct implementations.
+
+There're 5 implementations.
+
+distinct
+distinct_counter
+distinct_merge
+
+distinct_pandas
+distinct_pandas_unstack
+
+
+Todo
+----
+- [ ] Exaplain differences between implementations.
+- [ ] Check build_freq_rows functions.
+- [ ] Check repeat_rows functions.
+"""
 from itertools import chain, zip_longest
 from collections import Counter, defaultdict
 
@@ -140,6 +158,51 @@ def distinct(left, right, subset=None):
     return out_left, out_right
 
 
+def build_freq_rows_pivot(left, right, subset):
+    # add label of set source
+    left["source"] = "A"
+    right["source"] = "B"
+    # build rows frequency
+    _all = pd.concat([left, right], axis=0)
+    _all["n"] = 1
+    freq_table = _all.pivot_table(
+        columns=["source"], index=subset, aggfunc="count"
+    )
+    a_subs_b = freq_table["n"].fillna(0).eval("A - B").to_frame("AsubsB")
+    return a_subs_b
+
+
+def build_freq_rows_unstack(left, right, subset):
+    # add label of set source
+    left["source"] = "A"
+    right["source"] = "B"
+
+    _all = pd.concat([left, right], axis=0)
+    _all["n"] = 1
+    freq_table = _all.groupby(subset + ["source"]).count().unstack(-1)
+    a_subs_b = freq_table["n"].fillna(0).eval("A - B").to_frame("AsubsB")
+    return a_subs_b
+
+
+def repeat_rows_map(df):
+    # counter to dataframe
+    from functools import reduce
+    from operator import add
+    _list = map(lambda row: [row[0]] * int(row[1]), df.itertuples())
+    rows = reduce(add, _list)
+    out = pd.DataFrame(rows)
+    return out
+
+
+def repeat_rows_for(df):
+    # counter to dataframe
+    rows = []
+    for i, n in df.itertuples():
+        rows.extend([i] * int(n))
+    out = pd.DataFrame(rows)
+    return out
+
+
 def distinct_pandas(left, right, subset=None):
     """Get distinct rows.
 
@@ -158,32 +221,13 @@ def distinct_pandas(left, right, subset=None):
     left = left.copy()
     right = right.copy()
 
-    # add label of set source
-    left["source"] = "A"
-    right["source"] = "B"
-
-    _all = pd.concat([left, right], axis=0)
-    _all["n"] = 1
-    freq_table = _all.pivot_table(
-        columns=["source"], index=subset, aggfunc="count"
-    )
-    a_subs_b = freq_table["n"].fillna(0).eval("A - B").to_frame("AsubsB")
+    a_subs_b = build_freq_rows_pivot(left, right)
 
     a_distinct = a_subs_b.query("AsubsB>0")
+    b_distinct = (-a_subs_b).query("AsubsB>0")  # NOBUG: we need possitve freqs
 
-    # counter to dataframe
-    out_a = []
-    for i, n in a_distinct.itertuples():
-        out_a.extend([i] * int(n))
-    a_distinct_df = pd.DataFrame(out_a)
-
-    b_distinct = (-a_subs_b).query("AsubsB>0")
-
-    # counter to dataframe
-    out_b = []
-    for i, n in b_distinct.itertuples():
-        out_b.extend([i] * int(n))
-    b_distinct_df = pd.DataFrame(out_b)
+    a_distinct_df = repeat_rows_for(a_distinct)
+    b_distinct_df = repeat_rows_for(b_distinct)
 
     return a_distinct_df, b_distinct_df
 
@@ -206,32 +250,15 @@ def distinct_pandas_unstack(left, right, subset=None):
     left = left.copy()
     right = right.copy()
 
-    # add label of set source
-    left["source"] = "A"
-    right["source"] = "B"
-
-    _all = pd.concat([left, right], axis=0)
-    _all["n"] = 1
-    freq_table = _all.groupby(subset + ["source"]).count().unstack(-1)
-    a_subs_b = freq_table["n"].fillna(0).eval("A - B").to_frame("AsubsB")
-
-    # counter to dataframe
-    from functools import reduce
-    from operator import add
-
-    def extender(df):
-        _list = map(lambda row: [row[0]] * int(row[1]), df.itertuples())
-        rows = reduce(add, _list)
-        out = pd.DataFrame(rows)
-        return out
+    a_subs_b = build_freq_rows_unstack(left, right, subset)
 
     # counter
     a_distinct = a_subs_b.query("AsubsB>0")
-    b_distinct = (-a_subs_b).query("AsubsB>0")
+    b_distinct = (-a_subs_b).query("AsubsB>0")  # NOBUG: we need positive freqs
 
     # dataframe
-    a_distinct_df = extender(a_distinct)
-    b_distinct_df = extender(b_distinct)
+    a_distinct_df = repeat_rows_map(a_distinct)
+    b_distinct_df = repeat_rows_map(b_distinct)
 
     return a_distinct_df, b_distinct_df
 
@@ -289,27 +316,29 @@ def distinct_merge(left, right, subset=None):
         _left = _left.loc[:, subset]
         _left = _left.loc[:, subset]
 
+    _left.index.name = 'index'
+    _right.index.name = 'index'
+    _left = _left.reset_index()
+    _right = _right.reset_index()
+
     # create positional reference by each index as it can be repeated.
-    # e.g.: Index = ['a', 'a', 'b'] --> [0, 1, 0]
-    _left.loc[:, 'idx'] = (
-        _left.groupby(lambda x: x).apply(lambda x: range(len(x))).explode()
-    )
-    _right.loc[:, 'idx'] = (
-        _right.groupby(lambda x: x).apply(lambda x: range(len(x))).explode()
-    )
+    # e.g.: ['a', 'a', 'a', 'b'] --> a: [0, 1, 2], b: [0] --> [0, 1, 2, 0]
+    def range_like(x):
+        return range(len(x))
+
+    pos = 'posix'
+    _left[pos] = _left.groupby(_left.index).apply(range_like).explode()
+    _right[pos] = _right.groupby(_right.index).apply(range_like).explode()
 
     outer_join = _left.merge(_right, how='outer', indicator=True)
+    drop_col = ['_merge', pos]
+    merge = outer_join._merge
+    lonly = outer_join[(merge == 'left_only')].drop(drop_col, axis=1)
+    ronly = outer_join[(merge == 'righ_only')].drop(drop_col, axis=1)
 
-    drop_col = ['_merge', 'idx']
-    lonly = outer_join[(outer_join._merge == 'left_only')].drop(
-        drop_col, axis=1
-    )
-
-    ronly = outer_join[(outer_join._merge == 'righ_only')].drop(
-        drop_col, axis=1
-    )
-
-    # TODO: return the original df columns
+    lonly = lonly.set_index('index')
+    ronly = ronly.set_index('index')
+    # TODO: return the original df columns and index
     # out_left = left.loc[lonly.index]
     # out_righ = righ.loc[ronly.index]
 
